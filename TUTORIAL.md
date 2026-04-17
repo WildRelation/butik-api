@@ -2,7 +2,7 @@
 
 ## Introduktion
 
-I denna tutorial bygger vi en datalake med **DuckLake** och exponerar den som ett REST API med **FastAPI**. Vi driftsätter sedan allt på **KTH Cloud** och ansluter till datalaken med en Python-klient.
+I denna tutorial bygger vi en datalake med **DuckLake** och exponerar den som ett REST API med **FastAPI**. Vi driftsätter allt på **KTH Cloud** med två separata deployments — en för datalaken och en för Python-klienten som ansluter till den.
 
 ### Vad är en datalake?
 
@@ -17,6 +17,10 @@ DuckLake är ett öppet lakehouse-format byggt ovanpå DuckDB. Det består av tv
 
 Varje gång du skriver data skapas en ny **snapshot** — det betyder att du kan läsa historiska versioner av datan (time travel).
 
+### Varför behövs FastAPI?
+
+DuckLake är ingen server — det är bara filer på disk. Det kan inte ta emot nätverksanslutningar på egen hand. FastAPI fungerar som ett lager ovanpå DuckLake som exponerar datan via HTTP så att andra program (Python, Java etc.) kan kommunicera med datalaken.
+
 ---
 
 ## Förutsättningar
@@ -24,7 +28,23 @@ Varje gång du skriver data skapas en ny **snapshot** — det betyder att du kan
 - Python 3.12+
 - Docker
 - Ett konto på [KTH Cloud](https://app.cloud.cbh.kth.se)
-- Ett GitHub-konto
+- Ett GitHub-konto med SSH-nyckel tillagd i KTH Cloud
+
+---
+
+## Arkitektur
+
+```
+python-deployment                    misty-abnormally-educated
+(Python-klient)          →HTTP→      (Datalake — FastAPI + DuckLake)
+                                              ↓
+                                      /app/data (persistent volym)
+                                      ├── katalog.duckdb
+                                      └── lake/main/
+                                          ├── kunder/    ← Parquet
+                                          ├── produkter/ ← Parquet
+                                          └── ordrar/    ← Parquet
+```
 
 ---
 
@@ -34,14 +54,17 @@ Skapa följande filstruktur:
 
 ```
 butik-api/
-├── main.py           # FastAPI-app (datalake-server)
-├── database.py       # DuckLake-anslutning
-├── seed.py           # Startdata
-├── requirements.txt  # Paketberoenden
-├── Dockerfile        # Container-konfiguration
+├── main.py            # FastAPI-app (datalaken)
+├── database.py        # DuckLake-anslutning
+├── requirements.txt
+├── Dockerfile
 ├── docker-compose.yml
+├── .github/
+│   └── workflows/
+│       ├── docker.yml         # Bygger datalake-imagen
+│       └── docker-klient.yml  # Bygger klient-imagen
 └── klient/
-    ├── klient.py     # Python-klient
+    ├── klient.py      # Python-klienten
     ├── requirements.txt
     └── Dockerfile
 ```
@@ -50,7 +73,7 @@ butik-api/
 
 ## Steg 2 — DuckLake-anslutning
 
-Skapa `database.py` som hanterar anslutningen till DuckLake:
+Skapa `database.py`:
 
 ```python
 import duckdb
@@ -90,28 +113,44 @@ def init_db():
     con.close()
 ```
 
-Notera att `CATALOG_PATH` och `DATA_PATH` styrs av miljövariabler — det gör att samma kod fungerar både lokalt och i molnet.
+`CATALOG_PATH` och `DATA_PATH` styrs av miljövariabler — samma kod fungerar lokalt och i molnet.
 
 ---
 
 ## Steg 3 — FastAPI-server (datalaken)
 
-`main.py` exponerar datalaken som ett REST API med både HTML-sidor och JSON-endpoints:
+`main.py` exponerar datalaken som ett REST API med JSON-endpoints:
 
 ```python
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
+from typing import Optional
 from database import get_conn, init_db
 
 app = FastAPI(title="Butik Datalake")
 init_db()
 
-# JSON API — används av klienter (Python, Java etc.)
+# Seed om databasen är tom
+_con = get_conn()
+if _con.execute("SELECT COUNT(*) FROM butik.kunder").fetchone()[0] == 0:
+    _con.executemany("INSERT INTO butik.kunder VALUES (?, ?, ?, ?)", [
+        (1, "Anna Svensson",   "anna@example.com",  "070-1234567"),
+        (2, "Erik Johansson",  "erik@example.com",  "073-9876543"),
+        (3, "Maria Lindqvist", "maria@example.com", "076-5551234"),
+    ])
+_con.close()
 
+class NyKund(BaseModel):
+    namn: str
+    email: str
+    telefon: Optional[str] = None
+
+# JSON API — används av klienter
 @app.get("/api/kunder")
 async def api_kunder():
     con = get_conn()
-    rows = con.execute("SELECT id, namn, email, telefon FROM butik.kunder").fetchall()
+    rows = con.execute("SELECT id, namn, email, telefon FROM butik.kunder ORDER BY id").fetchall()
     con.close()
     return [{"id": r[0], "namn": r[1], "email": r[2], "telefon": r[3]} for r in rows]
 
@@ -122,14 +161,21 @@ async def api_ny_kund(kund: NyKund):
     con.execute("INSERT INTO butik.kunder VALUES (?, ?, ?, ?)",
                 [nid, kund.namn, kund.email, kund.telefon])
     con.close()
-    return {"id": nid, "namn": kund.namn}
+    return {"id": nid, "namn": kund.namn, "email": kund.email}
+
+@app.delete("/api/kunder/{kund_id}")
+async def api_radera_kund(kund_id: int):
+    con = get_conn()
+    con.execute("DELETE FROM butik.kunder WHERE id = ?", [kund_id])
+    con.close()
+    return {"deleted": kund_id}
 ```
 
-Fullständig kod finns i repot.
+Fullständig kod (inkl. produkter, ordrar, HTML-sidor) finns i repot.
 
 ---
 
-## Steg 4 — Dockerisera appen
+## Steg 4 — Dockerisera datalaken
 
 `Dockerfile`:
 
@@ -158,9 +204,64 @@ python-multipart==0.0.20
 
 ---
 
-## Steg 5 — GitHub Actions (automatisk CI/CD)
+## Steg 5 — Python-klienten
 
-Skapa `.github/workflows/docker.yml`:
+`klient/klient.py` är en FastAPI-app som hämtar data från datalaken och visar den i en webbsida:
+
+```python
+import requests
+import os
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+
+DATALAKE_URL = os.getenv(
+    "DATALAKE_URL",
+    "https://misty-abnormally-educated.app.cloud.cbh.kth.se"
+)
+
+app = FastAPI(title="Datalake Klient")
+
+def hamta(endpoint: str):
+    svar = requests.get(f"{DATALAKE_URL}{endpoint}", timeout=5)
+    svar.raise_for_status()
+    return svar.json()
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    kunder    = hamta("/api/kunder")
+    produkter = hamta("/api/produkter")
+    ordrar    = hamta("/api/ordrar")
+    # Bygger HTML-tabell och returnerar...
+```
+
+`klient/requirements.txt`:
+
+```
+fastapi==0.136.0
+uvicorn==0.44.0
+requests==2.32.3
+```
+
+`klient/Dockerfile`:
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY klient.py .
+ENV DATALAKE_URL=https://misty-abnormally-educated.app.cloud.cbh.kth.se
+EXPOSE 8001
+CMD ["uvicorn", "klient:app", "--host", "0.0.0.0", "--port", "8001"]
+```
+
+---
+
+## Steg 6 — GitHub Actions (CI/CD)
+
+Skapa två workflows — en för datalaken och en för klienten.
+
+`.github/workflows/docker.yml` (datalaken):
 
 ```yaml
 name: Build and push Docker image
@@ -191,16 +292,61 @@ jobs:
           tags: ${{ env.IMAGE }}
 ```
 
-Varje gång du pushar till `main` byggs en ny Docker-image automatiskt och publiceras till GitHub Container Registry (GHCR).
+`.github/workflows/docker-klient.yml` (klienten):
+
+```yaml
+name: Build and push klient image
+on:
+  push:
+    branches: [main]
+    paths:
+      - klient/**
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set lowercase image name
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/klient:latest" >> $GITHUB_ENV
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./klient
+          push: true
+          tags: ${{ env.IMAGE }}
+```
 
 ---
 
-## Steg 6 — Driftsätt på KTH Cloud
+## Steg 7 — SSH-nyckel till KTH Cloud
 
-1. Gå till [app.cloud.cbh.kth.se](https://app.cloud.cbh.kth.se)
-2. Skapa en ny **deployment**:
+KTH Cloud använder SSH-nycklar för att autentisera deployments. Generera en nyckel och lägg till den i portalen:
+
+```bash
+ssh-keygen -t ed25519 -C "din@email.com"
+cat ~/.ssh/id_ed25519.pub
+```
+
+Kopiera utskriften och lägg till den under **Account → SSH Keys** på [app.cloud.cbh.kth.se](https://app.cloud.cbh.kth.se).
+
+---
+
+## Steg 8 — Driftsätt datalaken på KTH Cloud
+
+1. Gå till [app.cloud.cbh.kth.se](https://app.cloud.cbh.kth.se) → **New deployment**
+2. Fyll i:
    - **Image:** `ghcr.io/wildrelation/butik-api:latest`
    - **Port:** `8000`
+   - **Visibility:** Public
 3. Lägg till **persistent storage**:
    - Name: `ducklake-data`
    - App path: `/app/data`
@@ -208,70 +354,41 @@ Varje gång du pushar till `main` byggs en ny Docker-image automatiskt och publi
 4. Lägg till **miljövariabler**:
    - `CATALOG_PATH` = `/app/data/katalog.duckdb`
    - `DATA_PATH` = `/app/data/lake/`
-5. Spara och starta deploymenten
+5. Spara — datalaken är nu live på `https://<namn>.app.cloud.cbh.kth.se`
 
-Din datalake är nu live på:
+---
+
+## Steg 9 — Driftsätt klienten på KTH Cloud
+
+1. Skapa en ny deployment:
+   - **Image:** `ghcr.io/wildrelation/butik-api/klient:latest`
+   - **Port:** `8001`
+   - **Visibility:** Public
+2. Lägg till miljövariabel:
+   - `DATALAKE_URL` = `https://<datalake-deployment>.app.cloud.cbh.kth.se`
+3. **Ingen persistent storage behövs** — klienten lagrar ingenting
+
+Klienten är nu live och hämtar data från datalaken:
 ```
-https://<deployment-namn>.app.cloud.cbh.kth.se
+https://<klient-deployment>.app.cloud.cbh.kth.se
 ```
 
 ---
 
-## Steg 7 — Python-klient
+## Steg 10 — Anslutning för Java-klienter
 
-Skapa `klient/klient.py` som ansluter till datalaken via HTTP:
+Java-klienter ansluter på exakt samma sätt via HTTP mot datalakens API.
 
-```python
-import requests
-import os
-
-DATALAKE_URL = os.getenv(
-    "DATALAKE_URL",
-    "https://misty-abnormally-educated.app.cloud.cbh.kth.se"
-)
-
-def hamta_kunder():
-    svar = requests.get(f"{DATALAKE_URL}/api/kunder")
-    svar.raise_for_status()
-    return svar.json()
-
-def skapa_kund(namn, email, telefon=None):
-    svar = requests.post(f"{DATALAKE_URL}/api/kunder", json={
-        "namn": namn, "email": email, "telefon": telefon
-    })
-    svar.raise_for_status()
-    return svar.json()
-
-if __name__ == "__main__":
-    kunder = hamta_kunder()
-    for k in kunder:
-        print(f"{k['id']}. {k['namn']} ({k['email']})")
-
-    ny = skapa_kund("Test Person", "test@example.se")
-    print(f"Skapad: {ny}")
-```
-
-Kör klienten:
-
-```bash
-pip install requests
-python klient.py
-```
-
----
-
-## Steg 8 — Anslutning för Java-klienter
-
-Java-klienter ansluter på exakt samma sätt via HTTP. Tillgängliga endpoints:
+Tillgängliga endpoints:
 
 | Metod | Endpoint | Beskrivning |
 |-------|----------|-------------|
 | GET | `/api/kunder` | Hämta alla kunder |
 | GET | `/api/produkter` | Hämta alla produkter |
 | GET | `/api/ordrar` | Hämta alla ordrar |
-| POST | `/api/kunder` | Skapa ny kund (JSON body) |
-| POST | `/api/produkter` | Skapa ny produkt (JSON body) |
-| POST | `/api/ordrar` | Skapa ny order (JSON body) |
+| POST | `/api/kunder` | Skapa ny kund |
+| POST | `/api/produkter` | Skapa ny produkt |
+| POST | `/api/ordrar` | Skapa ny order |
 | DELETE | `/api/kunder/{id}` | Radera kund |
 | DELETE | `/api/produkter/{id}` | Radera produkt |
 
@@ -279,29 +396,24 @@ Exempel med Java (HttpClient):
 
 ```java
 HttpClient client = HttpClient.newHttpClient();
+
+// Hämta alla kunder
 HttpRequest request = HttpRequest.newBuilder()
     .uri(URI.create("https://misty-abnormally-educated.app.cloud.cbh.kth.se/api/kunder"))
     .GET()
     .build();
 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 System.out.println(response.body());
-```
 
----
-
-## Arkitektur
-
-```
-Python/Java-klient
-      ↓ HTTP (GET/POST/DELETE)
-FastAPI-server (KTH Cloud)
-      ↓ läser/skriver
-DuckLake
-      ├── katalog.duckdb  (metadata)
-      └── lake/main/
-          ├── kunder/     (Parquet-filer)
-          ├── produkter/  (Parquet-filer)
-          └── ordrar/     (Parquet-filer)
+// Skapa ny kund
+String json = "{\"namn\":\"Java Klient\",\"email\":\"java@example.com\"}";
+HttpRequest postRequest = HttpRequest.newBuilder()
+    .uri(URI.create("https://misty-abnormally-educated.app.cloud.cbh.kth.se/api/kunder"))
+    .header("Content-Type", "application/json")
+    .POST(HttpRequest.BodyPublishers.ofString(json))
+    .build();
+HttpResponse<String> postResponse = client.send(postRequest, HttpResponse.BodyHandlers.ofString());
+System.out.println(postResponse.body());
 ```
 
 ---
@@ -314,10 +426,15 @@ DuckLake
 | Dataformat | Parquet (öppet) | Binärt (proprietärt) |
 | Time travel | Ja | Nej |
 | Skalbarhet | S3/GCS/lokal disk | Begränsad |
-| Antal deployments | 1 | 2 (app + databas) |
+| Antal deployments | 1 (datalaken) | 2 (app + databas) |
+| Kan läsas av | Python, Java, Spark, Pandas... | Kräver PostgreSQL-klient |
 
 ---
 
 ## Källkod
 
-Fullständig källkod finns på: [github.com/WildRelation/butik-api](https://github.com/WildRelation/butik-api)
+Fullständig källkod: [github.com/WildRelation/butik-api](https://github.com/WildRelation/butik-api)
+
+Live datalake: [misty-abnormally-educated.app.cloud.cbh.kth.se](https://misty-abnormally-educated.app.cloud.cbh.kth.se)
+
+Live klient: [python-deployment.app.cloud.cbh.kth.se](https://python-deployment.app.cloud.cbh.kth.se)
