@@ -125,7 +125,7 @@ async def visa_kunder(fel: str = ""):
 
 @app.post("/kunder/ny")
 async def ny_kund(namn: str = Form(...), email: str = Form(...), telefon: str = Form(""), lösenord: str = Form("")):
-    if not secrets.compare_digest(lösenord, API_KEY):
+    if not secrets.compare_digest(lösenord.encode(), API_KEY.encode()):
         return RedirectResponse(url="/kunder?fel=fel-lösenord", status_code=303)
     con = get_conn()
     nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.kunder").fetchone()[0]
@@ -136,7 +136,7 @@ async def ny_kund(namn: str = Form(...), email: str = Form(...), telefon: str = 
 
 @app.post("/kunder/{kund_id}/radera")
 async def radera_kund(kund_id: int, lösenord: str = Form("")):
-    if not secrets.compare_digest(lösenord, API_KEY):
+    if not secrets.compare_digest(lösenord.encode(), API_KEY.encode()):
         return RedirectResponse(url="/kunder?fel=fel-lösenord", status_code=303)
     con = get_conn()
     con.execute("DELETE FROM butik.ordrar WHERE kund_id = ?", [kund_id])
@@ -185,7 +185,7 @@ async def visa_produkter(fel: str = ""):
 
 @app.post("/produkter/ny")
 async def ny_produkt(namn: str = Form(...), pris: float = Form(...), lagersaldo: int = Form(0), lösenord: str = Form("")):
-    if not secrets.compare_digest(lösenord, API_KEY):
+    if not secrets.compare_digest(lösenord.encode(), API_KEY.encode()):
         return RedirectResponse(url="/produkter?fel=fel-lösenord", status_code=303)
     con = get_conn()
     nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.produkter").fetchone()[0]
@@ -196,7 +196,7 @@ async def ny_produkt(namn: str = Form(...), pris: float = Form(...), lagersaldo:
 
 @app.post("/produkter/{produkt_id}/radera")
 async def radera_produkt(produkt_id: int, lösenord: str = Form("")):
-    if not secrets.compare_digest(lösenord, API_KEY):
+    if not secrets.compare_digest(lösenord.encode(), API_KEY.encode()):
         return RedirectResponse(url="/produkter?fel=fel-lösenord", status_code=303)
     con = get_conn()
     con.execute("DELETE FROM butik.ordrar WHERE produkt_id = ?", [produkt_id])
@@ -258,7 +258,7 @@ async def visa_ordrar(fel: str = ""):
 
 @app.post("/ordrar/ny")
 async def ny_order(kund_id: int = Form(...), produkt_id: int = Form(...), antal: int = Form(...), lösenord: str = Form("")):
-    if not secrets.compare_digest(lösenord, API_KEY):
+    if not secrets.compare_digest(lösenord.encode(), API_KEY.encode()):
         return RedirectResponse(url="/ordrar?fel=fel-lösenord", status_code=303)
     con = get_conn()
     nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.ordrar").fetchone()[0]
@@ -270,7 +270,7 @@ async def ny_order(kund_id: int = Form(...), produkt_id: int = Form(...), antal:
 
 @app.post("/ordrar/{order_id}/radera")
 async def radera_order(order_id: int, lösenord: str = Form("")):
-    if not secrets.compare_digest(lösenord, API_KEY):
+    if not secrets.compare_digest(lösenord.encode(), API_KEY.encode()):
         return RedirectResponse(url="/ordrar?fel=fel-lösenord", status_code=303)
     con = get_conn()
     con.execute("DELETE FROM butik.ordrar WHERE id = ?", [order_id])
