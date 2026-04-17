@@ -39,7 +39,7 @@
                         <tbody>
                             <tr th:each="rad : ${dataset.data}">
                                 <td th:each="kol : ${dataset.kolumner}"
-                                    th:text="${rad[kol]}"></td>
+                                    th:text="${rad.get(kol)}"></td>
                             </tr>
                         </tbody>
                     </table>
