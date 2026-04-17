@@ -77,7 +77,7 @@ if _con.execute("SELECT COUNT(*) FROM butik.kunder").fetchone()[0] == 0:
 
 # Seed extra datasets om de inte finns
 _tabeller = [r[0] for r in _con.execute(
-    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'butik'"
+    "SELECT table_name FROM information_schema.tables WHERE table_catalog = 'butik'"
 ).fetchall()]
 
 if "vader_stockholm" not in _tabeller:
@@ -662,7 +662,7 @@ async def lista_datasets():
     con = get_conn()
     tabeller = con.execute("""
         SELECT table_name FROM information_schema.tables
-        WHERE table_schema = 'butik'
+        WHERE table_catalog = 'butik'
           AND table_name NOT IN ('kunder', 'produkter', 'ordrar')
         ORDER BY table_name
     """).fetchall()
@@ -675,13 +675,13 @@ async def lista_datasets():
 async def hamta_dataset(namn: str, limit: int = 100):
     con = get_conn()
     tabeller = [r[0] for r in con.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'butik'"
+        "SELECT table_name FROM information_schema.tables WHERE table_catalog = 'butik'"
     ).fetchall()]
     if namn not in tabeller:
         con.close()
         raise HTTPException(status_code=404, detail=f"Dataset '{namn}' hittades inte")
     kolumner = [r[0] for r in con.execute(
-        f"SELECT column_name FROM information_schema.columns WHERE table_schema = 'butik' AND table_name = '{namn}' ORDER BY ordinal_position"
+        f"SELECT column_name FROM information_schema.columns WHERE table_catalog = 'butik' AND table_name = '{namn}' ORDER BY ordinal_position"
     ).fetchall()]
     rows = con.execute(f"SELECT * FROM butik.{namn} LIMIT {limit}").fetchall()
     con.close()
