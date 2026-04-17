@@ -399,3 +399,138 @@ async def api_radera_produkt(produkt_id: int):
     con.execute("DELETE FROM butik.produkter WHERE id = ?", [produkt_id])
     con.close()
     return {"deleted": produkt_id}
+
+
+# ── FILTRERING ────────────────────────────────────────────────────────────────
+
+@app.get("/api/kunder/sok")
+async def sok_kunder(q: str = ""):
+    con = get_conn()
+    rows = con.execute(
+        "SELECT id, namn, email, telefon FROM butik.kunder WHERE namn ILIKE ? OR email ILIKE ? ORDER BY id",
+        [f"%{q}%", f"%{q}%"]
+    ).fetchall()
+    con.close()
+    return [{"id": r[0], "namn": r[1], "email": r[2], "telefon": r[3]} for r in rows]
+
+
+@app.get("/api/produkter/sok")
+async def sok_produkter(q: str = "", min_pris: float = 0, max_pris: float = 9999999, min_lager: int = 0):
+    con = get_conn()
+    rows = con.execute(
+        """SELECT id, namn, pris, lagersaldo FROM butik.produkter
+           WHERE namn ILIKE ?
+             AND pris BETWEEN ? AND ?
+             AND lagersaldo >= ?
+           ORDER BY pris""",
+        [f"%{q}%", min_pris, max_pris, min_lager]
+    ).fetchall()
+    con.close()
+    return [{"id": r[0], "namn": r[1], "pris": r[2], "lagersaldo": r[3]} for r in rows]
+
+
+@app.get("/api/ordrar/sok")
+async def sok_ordrar(fran: str = "", till: str = ""):
+    con = get_conn()
+    query = """
+        SELECT o.id, k.namn, p.namn, o.antal, o.skapad
+        FROM butik.ordrar o
+        JOIN butik.kunder k    ON k.id = o.kund_id
+        JOIN butik.produkter p ON p.id = o.produkt_id
+        WHERE (? = '' OR o.skapad >= ?::TIMESTAMP)
+          AND (? = '' OR o.skapad <= ?::TIMESTAMP)
+        ORDER BY o.skapad DESC
+    """
+    rows = con.execute(query, [fran, fran, till, till]).fetchall()
+    con.close()
+    return [{"id": r[0], "kund": r[1], "produkt": r[2], "antal": r[3], "skapad": str(r[4])} for r in rows]
+
+
+# ── AGGREGERINGAR ─────────────────────────────────────────────────────────────
+
+@app.get("/api/statistik/intakter-per-kund")
+async def intakter_per_kund():
+    con = get_conn()
+    rows = con.execute("""
+        SELECT k.id, k.namn, COUNT(o.id) AS antal_ordrar,
+               SUM(o.antal * p.pris) AS total_intakt
+        FROM butik.kunder k
+        LEFT JOIN butik.ordrar o    ON o.kund_id = k.id
+        LEFT JOIN butik.produkter p ON p.id = o.produkt_id
+        GROUP BY k.id, k.namn
+        ORDER BY total_intakt DESC NULLS LAST
+    """).fetchall()
+    con.close()
+    return [{"kund_id": r[0], "namn": r[1], "antal_ordrar": r[2], "total_intakt": r[3] or 0} for r in rows]
+
+
+@app.get("/api/statistik/basta-produkter")
+async def basta_produkter():
+    con = get_conn()
+    rows = con.execute("""
+        SELECT p.id, p.namn, p.pris,
+               COALESCE(SUM(o.antal), 0)            AS sålda_enheter,
+               COALESCE(SUM(o.antal * p.pris), 0)   AS total_intakt
+        FROM butik.produkter p
+        LEFT JOIN butik.ordrar o ON o.produkt_id = p.id
+        GROUP BY p.id, p.namn, p.pris
+        ORDER BY sålda_enheter DESC
+    """).fetchall()
+    con.close()
+    return [{"produkt_id": r[0], "namn": r[1], "pris": r[2], "sålda_enheter": r[3], "total_intakt": r[4]} for r in rows]
+
+
+@app.get("/api/statistik/ordrar-per-dag")
+async def ordrar_per_dag():
+    con = get_conn()
+    rows = con.execute("""
+        SELECT CAST(skapad AS DATE) AS dag,
+               COUNT(*)             AS antal_ordrar,
+               SUM(o.antal * p.pris) AS daglig_intakt
+        FROM butik.ordrar o
+        JOIN butik.produkter p ON p.id = o.produkt_id
+        GROUP BY dag
+        ORDER BY dag DESC
+    """).fetchall()
+    con.close()
+    return [{"dag": str(r[0]), "antal_ordrar": r[1], "daglig_intakt": r[2]} for r in rows]
+
+
+# ── JOINS ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/kunder/{kund_id}/ordrar")
+async def kunds_ordrar(kund_id: int):
+    con = get_conn()
+    kund = con.execute("SELECT id, namn, email FROM butik.kunder WHERE id = ?", [kund_id]).fetchone()
+    if not kund:
+        raise HTTPException(status_code=404, detail="Kund hittades inte")
+    rows = con.execute("""
+        SELECT o.id, p.namn, p.pris, o.antal, o.antal * p.pris AS delsumma, o.skapad
+        FROM butik.ordrar o
+        JOIN butik.produkter p ON p.id = o.produkt_id
+        WHERE o.kund_id = ?
+        ORDER BY o.skapad DESC
+    """, [kund_id]).fetchall()
+    con.close()
+    ordrar = [{"order_id": r[0], "produkt": r[1], "pris": r[2], "antal": r[3], "delsumma": r[4], "skapad": str(r[5])} for r in rows]
+    return {"kund": {"id": kund[0], "namn": kund[1], "email": kund[2]}, "ordrar": ordrar, "totalt": sum(o["delsumma"] for o in ordrar)}
+
+
+@app.get("/api/produkter/{produkt_id}/ordrar")
+async def produkts_ordrar(produkt_id: int):
+    con = get_conn()
+    produkt = con.execute("SELECT id, namn, pris FROM butik.produkter WHERE id = ?", [produkt_id]).fetchone()
+    if not produkt:
+        raise HTTPException(status_code=404, detail="Produkt hittades inte")
+    rows = con.execute("""
+        SELECT o.id, k.namn, k.email, o.antal, o.skapad
+        FROM butik.ordrar o
+        JOIN butik.kunder k ON k.id = o.kund_id
+        WHERE o.produkt_id = ?
+        ORDER BY o.skapad DESC
+    """, [produkt_id]).fetchall()
+    con.close()
+    return {
+        "produkt": {"id": produkt[0], "namn": produkt[1], "pris": produkt[2]},
+        "ordrar": [{"order_id": r[0], "kund": r[1], "email": r[2], "antal": r[3], "skapad": str(r[4])} for r in rows]
+    }
