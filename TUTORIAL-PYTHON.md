@@ -57,7 +57,7 @@ Exempel på hur det kan se ut i verkligheten:
 Skapa ett nytt GitHub-repo och klona det lokalt. Skapa sedan följande filstruktur:
 
 ```
-butik-api/
+ducklake-platform/
 ├── main.py            # FastAPI-app (datalaken)
 ├── database.py        # DuckLake-anslutning
 ├── requirements.txt
@@ -453,7 +453,7 @@ Datalaken stödjer filtrering, aggregeringar och joins via dessa endpoints:
 
 ## Källkod
 
-Fullständig källkod: [github.com/WildRelation/butik-api](https://github.com/WildRelation/butik-api)
+Fullständig källkod: [github.com/WildRelation/ducklake-platform](https://github.com/WildRelation/ducklake-platform)
 
 Live datalake: [misty-abnormally-educated.app.cloud.cbh.kth.se](https://misty-abnormally-educated.app.cloud.cbh.kth.se)
 

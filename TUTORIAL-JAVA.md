@@ -329,7 +329,7 @@ public class DatalakeKlient {
 
 ## Källkod och live-exempel
 
-Källkod (datalaken): [github.com/WildRelation/butik-api](https://github.com/WildRelation/butik-api)
+Källkod (datalaken): [github.com/WildRelation/ducklake-platform](https://github.com/WildRelation/ducklake-platform)
 
 Live datalake API: [misty-abnormally-educated.app.cloud.cbh.kth.se](https://misty-abnormally-educated.app.cloud.cbh.kth.se)
 

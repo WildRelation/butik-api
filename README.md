@@ -55,7 +55,7 @@ ducklake-datasets                python-deployment
 ## Projektstruktur
 
 ```
-butik-api/
+ducklake-platform/
 ├── main.py              # FastAPI REST API + HTML-sidor
 ├── database.py          # DuckLake-anslutning
 ├── requirements.txt     # Python-beroenden
@@ -198,9 +198,9 @@ Varje push till `main` triggar GitHub Actions som bygger och pushar Docker-image
 
 | Image | Triggas av |
 |-------|------------|
-| `ghcr.io/wildrelation/butik-api:latest` | Alla pushes |
-| `ghcr.io/wildrelation/butik-api/klient:latest` | Ändringar i `klient/` |
-| `ghcr.io/wildrelation/butik-api/kaggle:latest` | Ändringar i `kaggle/` |
+| `ghcr.io/wildrelation/ducklake-platform:latest` | Alla pushes |
+| `ghcr.io/wildrelation/ducklake-platform/klient:latest` | Ändringar i `klient/` |
+| `ghcr.io/wildrelation/ducklake-platform/kaggle:latest` | Ändringar i `kaggle/` |
 
 ---
 
