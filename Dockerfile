@@ -9,7 +9,8 @@ RUN python3 -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL duck
 
 COPY . .
 
-ENV DATABASE_URL=postgresql://postgres:password@worthy-continually-diaphragm:5432/butik
+ENV CATALOG_PATH=/app/data/katalog.duckdb
+ENV DATA_PATH=/app/data/lake/
 
 EXPOSE 8000
 

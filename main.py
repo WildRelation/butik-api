@@ -1,20 +1,29 @@
-from fastapi import FastAPI, Depends, Form
+from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from pg_database import get_pg, init_pg, seed_pg
-import os
-
-DUCKLAKE_ENABLED = bool(os.getenv("CATALOG_PATH"))
-
-if DUCKLAKE_ENABLED:
-    from database import get_conn, init_db
-    init_db()
+from database import get_conn, init_db
 
 app = FastAPI(title="Butik API")
 
-init_pg()
-seed_pg()
+init_db()
+
+# Seed om databasen är tom
+_con = get_conn()
+if _con.execute("SELECT COUNT(*) FROM butik.kunder").fetchone()[0] == 0:
+    _con.executemany("INSERT INTO butik.kunder VALUES (?, ?, ?, ?)", [
+        (1, "Anna Svensson",   "anna@example.com",  "070-1234567"),
+        (2, "Erik Johansson",  "erik@example.com",  "073-9876543"),
+        (3, "Maria Lindqvist", "maria@example.com", "076-5551234"),
+    ])
+    _con.executemany("INSERT INTO butik.produkter VALUES (?, ?, ?, ?)", [
+        (1, "Laptop",      9999.0, 15),
+        (2, "Hörlurar",     799.0, 50),
+        (3, "Tangentbord", 1299.0, 30),
+        (4, "Mus",          399.0, 80),
+    ])
+    _con.executemany("INSERT INTO butik.ordrar (id, kund_id, produkt_id, antal) VALUES (?, ?, ?, ?)", [
+        (1, 1, 1, 1), (2, 1, 2, 2), (3, 2, 3, 1), (4, 3, 4, 3),
+    ])
+_con.close()
 
 NAV = '<a href="/">← Tillbaka</a>'
 STYLE = """
@@ -34,10 +43,9 @@ STYLE = """
   form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; align-items: flex-end; }
   input, select { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95rem; }
   label { font-size: 0.85rem; color: #555; display: block; margin-bottom: 2px; }
-  .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; }
-  .btn-add  { background: #2c7a7b; color: white; }
-  .btn-del  { background: #e53e3e; color: white; padding: 4px 10px; font-size: 0.85rem; }
-  .btn-edit { background: #d69e2e; color: white; padding: 4px 10px; font-size: 0.85rem; }
+  .btn     { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; }
+  .btn-add { background: #2c7a7b; color: white; }
+  .btn-del { background: #e53e3e; color: white; padding: 4px 10px; font-size: 0.85rem; }
 </style>
 """
 
@@ -52,49 +60,41 @@ def redirect(url: str):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    ducklake_section = """
-        <h3>DuckLake <span class='badge'>Parquet</span></h3>
-        <nav>
-            <a href='/kunder'>Kunder</a>
-            <a href='/produkter'>Produkter</a>
-            <a href='/ordrar'>Ordrar</a>
-            <a href='/snapshots'>Snapshots</a>
-        </nav><br>
-    """ if DUCKLAKE_ENABLED else ""
-    return page("Butik", f"""
+    return page("Butik", """
         <div class='card'>
-            <h1>Välkommen till Butik-API</h1>
-            {ducklake_section}
-            <h3>PostgreSQL <span class='badge'>KTH Cloud</span></h3>
+            <h1>Välkommen till Butik-API <span class='badge'>DuckLake</span></h1>
             <nav>
-                <a href='/pg/kunder'>Kunder</a>
-                <a href='/pg/produkter'>Produkter</a>
-                <a href='/pg/ordrar'>Ordrar</a>
-            </nav><br>
-            <a href='/docs'>API-dokumentation</a>
+                <a href='/kunder'>Kunder</a>
+                <a href='/produkter'>Produkter</a>
+                <a href='/ordrar'>Ordrar</a>
+                <a href='/snapshots'>Snapshots</a>
+                <a href='/docs'>API-dokumentation</a>
+            </nav>
         </div>
     """)
 
 
 # ── KUNDER ────────────────────────────────────────────────────────────────────
 
-@app.get("/pg/kunder", response_class=HTMLResponse)
-async def pg_kunder(db: Session = Depends(get_pg)):
-    rows = db.execute(text("SELECT id, namn, email, telefon FROM kunder ORDER BY id")).fetchall()
+@app.get("/kunder", response_class=HTMLResponse)
+async def visa_kunder():
+    con = get_conn()
+    rows = con.execute("SELECT id, namn, email, telefon FROM butik.kunder ORDER BY id").fetchall()
+    con.close()
     rader = "".join(f"""
         <tr>
             <td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3] or ''}</td>
             <td>
-                <form method='post' action='/pg/kunder/{r[0]}/radera' style='display:inline'>
+                <form method='post' action='/kunder/{r[0]}/radera' style='display:inline'>
                     <button class='btn btn-del'>Ta bort</button>
                 </form>
             </td>
         </tr>""" for r in rows)
     return page("Kunder", f"""
-        <h1>Kunder <span class='badge'>PostgreSQL</span></h1>{NAV}
+        <h1>Kunder <span class='badge'>DuckLake</span></h1>{NAV}
         <div class='card'>
             <h2>Lägg till kund</h2>
-            <form method='post' action='/pg/kunder/ny'>
+            <form method='post' action='/kunder/ny'>
                 <div><label>Namn</label><input name='namn' required></div>
                 <div><label>E-post</label><input name='email' type='email' required></div>
                 <div><label>Telefon</label><input name='telefon'></div>
@@ -108,41 +108,45 @@ async def pg_kunder(db: Session = Depends(get_pg)):
     """)
 
 
-@app.post("/pg/kunder/ny")
-async def ny_kund(namn: str = Form(...), email: str = Form(...), telefon: str = Form(""), db: Session = Depends(get_pg)):
-    db.execute(text("INSERT INTO kunder (namn, email, telefon) VALUES (:namn, :email, :telefon)"),
-               {"namn": namn, "email": email, "telefon": telefon or None})
-    db.commit()
-    return redirect("/pg/kunder")
+@app.post("/kunder/ny")
+async def ny_kund(namn: str = Form(...), email: str = Form(...), telefon: str = Form("")):
+    con = get_conn()
+    nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.kunder").fetchone()[0]
+    con.execute("INSERT INTO butik.kunder VALUES (?, ?, ?, ?)", [nid, namn, email, telefon or None])
+    con.close()
+    return redirect("/kunder")
 
 
-@app.post("/pg/kunder/{kund_id}/radera")
-async def radera_kund(kund_id: int, db: Session = Depends(get_pg)):
-    db.execute(text("DELETE FROM ordrar WHERE kund_id = :id"), {"id": kund_id})
-    db.execute(text("DELETE FROM kunder WHERE id = :id"), {"id": kund_id})
-    db.commit()
-    return redirect("/pg/kunder")
+@app.post("/kunder/{kund_id}/radera")
+async def radera_kund(kund_id: int):
+    con = get_conn()
+    con.execute("DELETE FROM butik.ordrar WHERE kund_id = ?", [kund_id])
+    con.execute("DELETE FROM butik.kunder WHERE id = ?", [kund_id])
+    con.close()
+    return redirect("/kunder")
 
 
 # ── PRODUKTER ─────────────────────────────────────────────────────────────────
 
-@app.get("/pg/produkter", response_class=HTMLResponse)
-async def pg_produkter(db: Session = Depends(get_pg)):
-    rows = db.execute(text("SELECT id, namn, pris, lagersaldo FROM produkter ORDER BY id")).fetchall()
+@app.get("/produkter", response_class=HTMLResponse)
+async def visa_produkter():
+    con = get_conn()
+    rows = con.execute("SELECT id, namn, pris, lagersaldo FROM butik.produkter ORDER BY id").fetchall()
+    con.close()
     rader = "".join(f"""
         <tr>
             <td>{r[0]}</td><td>{r[1]}</td><td>{r[2]:.2f} kr</td><td>{r[3]}</td>
             <td>
-                <form method='post' action='/pg/produkter/{r[0]}/radera' style='display:inline'>
+                <form method='post' action='/produkter/{r[0]}/radera' style='display:inline'>
                     <button class='btn btn-del'>Ta bort</button>
                 </form>
             </td>
         </tr>""" for r in rows)
     return page("Produkter", f"""
-        <h1>Produkter <span class='badge'>PostgreSQL</span></h1>{NAV}
+        <h1>Produkter <span class='badge'>DuckLake</span></h1>{NAV}
         <div class='card'>
             <h2>Lägg till produkt</h2>
-            <form method='post' action='/pg/produkter/ny'>
+            <form method='post' action='/produkter/ny'>
                 <div><label>Namn</label><input name='namn' required></div>
                 <div><label>Pris (kr)</label><input name='pris' type='number' step='0.01' required></div>
                 <div><label>Lagersaldo</label><input name='lagersaldo' type='number' value='0'></div>
@@ -156,54 +160,58 @@ async def pg_produkter(db: Session = Depends(get_pg)):
     """)
 
 
-@app.post("/pg/produkter/ny")
-async def ny_produkt(namn: str = Form(...), pris: float = Form(...), lagersaldo: int = Form(0), db: Session = Depends(get_pg)):
-    db.execute(text("INSERT INTO produkter (namn, pris, lagersaldo) VALUES (:namn, :pris, :lagersaldo)"),
-               {"namn": namn, "pris": pris, "lagersaldo": lagersaldo})
-    db.commit()
-    return redirect("/pg/produkter")
+@app.post("/produkter/ny")
+async def ny_produkt(namn: str = Form(...), pris: float = Form(...), lagersaldo: int = Form(0)):
+    con = get_conn()
+    nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.produkter").fetchone()[0]
+    con.execute("INSERT INTO butik.produkter VALUES (?, ?, ?, ?)", [nid, namn, pris, lagersaldo])
+    con.close()
+    return redirect("/produkter")
 
 
-@app.post("/pg/produkter/{produkt_id}/radera")
-async def radera_produkt(produkt_id: int, db: Session = Depends(get_pg)):
-    db.execute(text("DELETE FROM ordrar WHERE produkt_id = :id"), {"id": produkt_id})
-    db.execute(text("DELETE FROM produkter WHERE id = :id"), {"id": produkt_id})
-    db.commit()
-    return redirect("/pg/produkter")
+@app.post("/produkter/{produkt_id}/radera")
+async def radera_produkt(produkt_id: int):
+    con = get_conn()
+    con.execute("DELETE FROM butik.ordrar WHERE produkt_id = ?", [produkt_id])
+    con.execute("DELETE FROM butik.produkter WHERE id = ?", [produkt_id])
+    con.close()
+    return redirect("/produkter")
 
 
 # ── ORDRAR ────────────────────────────────────────────────────────────────────
 
-@app.get("/pg/ordrar", response_class=HTMLResponse)
-async def pg_ordrar(db: Session = Depends(get_pg)):
-    rows = db.execute(text("""
+@app.get("/ordrar", response_class=HTMLResponse)
+async def visa_ordrar():
+    con = get_conn()
+    rows = con.execute("""
         SELECT o.id, k.namn, p.namn, o.antal, o.skapad
-        FROM ordrar o
-        JOIN kunder k ON k.id = o.kund_id
-        JOIN produkter p ON p.id = o.produkt_id
+        FROM butik.ordrar o
+        JOIN butik.kunder k    ON k.id = o.kund_id
+        JOIN butik.produkter p ON p.id = o.produkt_id
         ORDER BY o.id
-    """)).fetchall()
-    kunder = db.execute(text("SELECT id, namn FROM kunder ORDER BY namn")).fetchall()
-    produkter = db.execute(text("SELECT id, namn FROM produkter ORDER BY namn")).fetchall()
+    """).fetchall()
+    kunder   = con.execute("SELECT id, namn FROM butik.kunder ORDER BY namn").fetchall()
+    produkter = con.execute("SELECT id, namn FROM butik.produkter ORDER BY namn").fetchall()
+    con.close()
 
     rader = "".join(f"""
         <tr>
             <td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{str(r[4])[:16]}</td>
             <td>
-                <form method='post' action='/pg/ordrar/{r[0]}/radera' style='display:inline'>
+                <form method='post' action='/ordrar/{r[0]}/radera' style='display:inline'>
                     <button class='btn btn-del'>Ta bort</button>
                 </form>
             </td>
         </tr>""" for r in rows)
 
-    kund_options = "".join(f"<option value='{k[0]}'>{k[1]}</option>" for k in kunder)
+    kund_options    = "".join(f"<option value='{k[0]}'>{k[1]}</option>" for k in kunder)
     produkt_options = "".join(f"<option value='{p[0]}'>{p[1]}</option>" for p in produkter)
 
     return page("Ordrar", f"""
-        <h1>Ordrar <span class='badge'>PostgreSQL</span></h1>{NAV}
+        <h1>Ordrar <span class='badge'>DuckLake</span></h1>{NAV}
         <div class='card'>
             <h2>Lägg till order</h2>
-            <form method='post' action='/pg/ordrar/ny'>
+            <form method='post' action='/ordrar/ny'>
                 <div><label>Kund</label><select name='kund_id'>{kund_options}</select></div>
                 <div><label>Produkt</label><select name='produkt_id'>{produkt_options}</select></div>
                 <div><label>Antal</label><input name='antal' type='number' value='1' min='1' required></div>
@@ -217,55 +225,25 @@ async def pg_ordrar(db: Session = Depends(get_pg)):
     """)
 
 
-@app.post("/pg/ordrar/ny")
-async def ny_order(kund_id: int = Form(...), produkt_id: int = Form(...), antal: int = Form(...), db: Session = Depends(get_pg)):
-    db.execute(text("INSERT INTO ordrar (kund_id, produkt_id, antal) VALUES (:kund_id, :produkt_id, :antal)"),
-               {"kund_id": kund_id, "produkt_id": produkt_id, "antal": antal})
-    db.commit()
-    return redirect("/pg/ordrar")
-
-
-@app.post("/pg/ordrar/{order_id}/radera")
-async def radera_order(order_id: int, db: Session = Depends(get_pg)):
-    db.execute(text("DELETE FROM ordrar WHERE id = :id"), {"id": order_id})
-    db.commit()
-    return redirect("/pg/ordrar")
-
-
-# ── DUCKLAKE (valfri) ─────────────────────────────────────────────────────────
-
-@app.get("/kunder", response_class=HTMLResponse)
-async def visa_kunder():
+@app.post("/ordrar/ny")
+async def ny_order(kund_id: int = Form(...), produkt_id: int = Form(...), antal: int = Form(...)):
     con = get_conn()
-    rows = con.execute("SELECT id, namn, email, telefon FROM butik.kunder ORDER BY id").fetchall()
+    nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.ordrar").fetchone()[0]
+    con.execute("INSERT INTO butik.ordrar (id, kund_id, produkt_id, antal) VALUES (?, ?, ?, ?)",
+                [nid, kund_id, produkt_id, antal])
     con.close()
-    rader = "".join(f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td></tr>" for r in rows)
-    return page("Kunder", f"<h1>Kunder</h1>{NAV}<table><tr><th>ID</th><th>Namn</th><th>E-post</th><th>Telefon</th></tr>{rader}</table>")
+    return redirect("/ordrar")
 
 
-@app.get("/produkter", response_class=HTMLResponse)
-async def visa_produkter():
+@app.post("/ordrar/{order_id}/radera")
+async def radera_order(order_id: int):
     con = get_conn()
-    rows = con.execute("SELECT id, namn, pris, lagersaldo FROM butik.produkter ORDER BY id").fetchall()
+    con.execute("DELETE FROM butik.ordrar WHERE id = ?", [order_id])
     con.close()
-    rader = "".join(f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]:.2f} kr</td><td>{r[3]}</td></tr>" for r in rows)
-    return page("Produkter", f"<h1>Produkter</h1>{NAV}<table><tr><th>ID</th><th>Namn</th><th>Pris</th><th>Lagersaldo</th></tr>{rader}</table>")
+    return redirect("/ordrar")
 
 
-@app.get("/ordrar", response_class=HTMLResponse)
-async def visa_ordrar():
-    con = get_conn()
-    rows = con.execute("""
-        SELECT o.id, k.namn, p.namn, o.antal, o.skapad
-        FROM butik.ordrar o
-        JOIN butik.kunder k ON k.id = o.kund_id
-        JOIN butik.produkter p ON p.id = o.produkt_id
-        ORDER BY o.id
-    """).fetchall()
-    con.close()
-    rader = "".join(f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{str(r[4])[:16]}</td></tr>" for r in rows)
-    return page("Ordrar", f"<h1>Ordrar</h1>{NAV}<table><tr><th>ID</th><th>Kund</th><th>Produkt</th><th>Antal</th><th>Datum</th></tr>{rader}</table>")
-
+# ── SNAPSHOTS ─────────────────────────────────────────────────────────────────
 
 @app.get("/snapshots", response_class=HTMLResponse)
 async def visa_snapshots():
@@ -283,7 +261,7 @@ async def visa_snapshots():
     )
     return page("Snapshots", f"""
         <h1>Snapshots <span class='badge'>Time Travel</span></h1>{NAV}
-        <p>Varje skrivoperation skapar en snapshot — du kan läsa historiska versioner.</p>
+        <p>Varje skrivoperation skapar en ny snapshot — historiken bevaras.</p>
         <table>
             <tr><th>Snapshot ID</th><th>Tidpunkt</th><th>Schema-version</th><th>Ändringar</th></tr>
             {rader}
