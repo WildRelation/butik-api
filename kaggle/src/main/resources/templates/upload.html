@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <title>Ladda upp dataset</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8f9fa; }
+        .header-bar { background: #20232a; color: white; padding: 32px 0; margin-bottom: 32px; }
+        .upload-card { max-width: 600px; }
+        .drop-area { border: 2px dashed #dee2e6; border-radius: 12px; padding: 40px;
+                     text-align: center; background: white; cursor: pointer; }
+        .drop-area:hover { border-color: #0d6efd; background: #f0f7ff; }
+    </style>
+</head>
+<body>
+
+<div class="header-bar">
+    <div class="container">
+        <a href="/" class="text-white text-decoration-none small">← Alla datasets</a>
+        <h1 class="mt-2">Ladda upp dataset</h1>
+        <p class="text-muted mb-0">Stöder CSV och Parquet-filer</p>
+    </div>
+</div>
+
+<div class="container pb-5">
+    <div class="upload-card">
+
+        <div th:if="${fel}" class="alert alert-danger" th:text="${fel}"></div>
+        <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+
+        <div class="card border-0 shadow-sm p-4">
+            <form method="post" action="/upload" enctype="multipart/form-data">
+
+                <div class="mb-4">
+                    <label class="form-label fw-semibold">Fil (CSV eller Parquet)</label>
+                    <div class="drop-area" onclick="document.getElementById('filInput').click()">
+                        <div id="filNamn" class="text-muted">Klicka för att välja fil</div>
+                        <small class="text-muted">.csv eller .parquet</small>
+                    </div>
+                    <input type="file" id="filInput" name="fil" accept=".csv,.parquet"
+                           class="d-none" required
+                           onchange="document.getElementById('filNamn').textContent = this.files[0].name">
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-semibold">Tabellnamn</label>
+                    <input type="text" name="tabellnamn" class="form-control"
+                           placeholder="t.ex. mitt_dataset" required
+                           pattern="[a-zA-Z_][a-zA-Z0-9_]*"
+                           title="Bara bokstäver, siffror och _ — börja med bokstav eller _">
+                    <div class="form-text">Används som namn i datalaken. Bara bokstäver, siffror och _.</div>
+                </div>
+
+                <button type="submit" class="btn btn-success w-100">Ladda upp</button>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>
