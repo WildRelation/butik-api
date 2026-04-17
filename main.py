@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from database import get_conn, init_db
+from pydantic import BaseModel
+from typing import Optional
 
 app = FastAPI(title="Butik API")
 
@@ -267,3 +269,97 @@ async def visa_snapshots():
             {rader}
         </table>
     """)
+
+
+# ── JSON API ──────────────────────────────────────────────────────────────────
+
+class NyKund(BaseModel):
+    namn: str
+    email: str
+    telefon: Optional[str] = None
+
+class NyProdukt(BaseModel):
+    namn: str
+    pris: float
+    lagersaldo: Optional[int] = 0
+
+class NyOrder(BaseModel):
+    kund_id: int
+    produkt_id: int
+    antal: int
+
+
+@app.get("/api/kunder")
+async def api_kunder():
+    con = get_conn()
+    rows = con.execute("SELECT id, namn, email, telefon FROM butik.kunder ORDER BY id").fetchall()
+    con.close()
+    return [{"id": r[0], "namn": r[1], "email": r[2], "telefon": r[3]} for r in rows]
+
+
+@app.get("/api/produkter")
+async def api_produkter():
+    con = get_conn()
+    rows = con.execute("SELECT id, namn, pris, lagersaldo FROM butik.produkter ORDER BY id").fetchall()
+    con.close()
+    return [{"id": r[0], "namn": r[1], "pris": r[2], "lagersaldo": r[3]} for r in rows]
+
+
+@app.get("/api/ordrar")
+async def api_ordrar():
+    con = get_conn()
+    rows = con.execute("""
+        SELECT o.id, k.namn, p.namn, o.antal, o.skapad
+        FROM butik.ordrar o
+        JOIN butik.kunder k    ON k.id = o.kund_id
+        JOIN butik.produkter p ON p.id = o.produkt_id
+        ORDER BY o.id
+    """).fetchall()
+    con.close()
+    return [{"id": r[0], "kund": r[1], "produkt": r[2], "antal": r[3], "skapad": str(r[4])} for r in rows]
+
+
+@app.post("/api/kunder", status_code=201)
+async def api_ny_kund(kund: NyKund):
+    con = get_conn()
+    nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.kunder").fetchone()[0]
+    con.execute("INSERT INTO butik.kunder VALUES (?, ?, ?, ?)", [nid, kund.namn, kund.email, kund.telefon])
+    con.close()
+    return {"id": nid, "namn": kund.namn, "email": kund.email, "telefon": kund.telefon}
+
+
+@app.post("/api/produkter", status_code=201)
+async def api_ny_produkt(produkt: NyProdukt):
+    con = get_conn()
+    nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.produkter").fetchone()[0]
+    con.execute("INSERT INTO butik.produkter VALUES (?, ?, ?, ?)", [nid, produkt.namn, produkt.pris, produkt.lagersaldo])
+    con.close()
+    return {"id": nid, "namn": produkt.namn, "pris": produkt.pris, "lagersaldo": produkt.lagersaldo}
+
+
+@app.post("/api/ordrar", status_code=201)
+async def api_ny_order(order: NyOrder):
+    con = get_conn()
+    nid = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM butik.ordrar").fetchone()[0]
+    con.execute("INSERT INTO butik.ordrar (id, kund_id, produkt_id, antal) VALUES (?, ?, ?, ?)",
+                [nid, order.kund_id, order.produkt_id, order.antal])
+    con.close()
+    return {"id": nid, "kund_id": order.kund_id, "produkt_id": order.produkt_id, "antal": order.antal}
+
+
+@app.delete("/api/kunder/{kund_id}")
+async def api_radera_kund(kund_id: int):
+    con = get_conn()
+    con.execute("DELETE FROM butik.ordrar WHERE kund_id = ?", [kund_id])
+    con.execute("DELETE FROM butik.kunder WHERE id = ?", [kund_id])
+    con.close()
+    return {"deleted": kund_id}
+
+
+@app.delete("/api/produkter/{produkt_id}")
+async def api_radera_produkt(produkt_id: int):
+    con = get_conn()
+    con.execute("DELETE FROM butik.ordrar WHERE produkt_id = ?", [produkt_id])
+    con.execute("DELETE FROM butik.produkter WHERE id = ?", [produkt_id])
+    con.close()
+    return {"deleted": produkt_id}
