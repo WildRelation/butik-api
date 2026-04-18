@@ -189,6 +189,7 @@ async def index():
                 <a href='/produkter'>Produkter</a>
                 <a href='/ordrar'>Ordrar</a>
                 <a href='/snapshots'>Snapshots</a>
+                <a href='/datasets'>Datasets</a>
                 <a href='/docs'>API-dokumentation</a>
             </nav>
         </div>
@@ -386,6 +387,60 @@ async def radera_order(order_id: int, lösenord: str = Form("")):
     con.execute("DELETE FROM butik.ordrar WHERE id = ?", [order_id])
     con.close()
     return redirect("/ordrar")
+
+
+# ── DATASETS HTML ─────────────────────────────────────────────────────────────
+
+@app.get("/datasets", response_class=HTMLResponse)
+async def visa_datasets():
+    con = get_conn()
+    tabeller = con.execute("""
+        SELECT table_name FROM duckdb_tables()
+        WHERE database_name = 'butik'
+        ORDER BY table_name
+    """).fetchall()
+    rader = ""
+    for (namn,) in tabeller:
+        antal = con.execute(f"SELECT COUNT(*) FROM butik.{namn}").fetchone()[0]
+        rader += f"<tr><td><a href='/datasets/{namn}'>{namn}</a></td><td>{antal}</td></tr>"
+    con.close()
+    return page("Datasets", f"""
+        <h1>Datasets <span class='badge'>DuckLake</span></h1>{NAV}
+        <p>Alla tabeller som finns i datalaken. Klicka på ett dataset för att se datan.</p>
+        <table>
+            <tr><th>Namn</th><th>Antal rader</th></tr>
+            {rader}
+        </table>
+    """)
+
+
+@app.get("/datasets/{namn}", response_class=HTMLResponse)
+async def visa_dataset(namn: str):
+    con = get_conn()
+    tabeller = [r[0] for r in con.execute(
+        "SELECT table_name FROM duckdb_tables() WHERE database_name = 'butik'"
+    ).fetchall()]
+    if namn not in tabeller:
+        con.close()
+        raise HTTPException(status_code=404, detail=f"Dataset '{namn}' hittades inte")
+    kolumner = [r[0] for r in con.execute(
+        f"SELECT column_name FROM duckdb_columns() WHERE database_name = 'butik' AND table_name = '{namn}' ORDER BY column_index"
+    ).fetchall()]
+    rows = con.execute(f"SELECT * FROM butik.{namn} LIMIT 100").fetchall()
+    con.close()
+    headers = "".join(f"<th>{k}</th>" for k in kolumner)
+    rader = "".join(
+        "<tr>" + "".join(f"<td>{v if v is not None else ''}</td>" for v in r) + "</tr>"
+        for r in rows
+    )
+    return page(namn, f"""
+        <h1>{namn} <span class='badge'>Dataset</span></h1>{NAV}
+        <p>{len(rows)} rader · {len(kolumner)} kolumner</p>
+        <table>
+            <tr>{headers}</tr>
+            {rader}
+        </table>
+    """)
 
 
 # ── SNAPSHOTS ─────────────────────────────────────────────────────────────────
