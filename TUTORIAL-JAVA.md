@@ -316,9 +316,28 @@ public class DatalakeKlient {
 
 ---
 
+## Exempel: Spring Boot Java-klient
+
+Ett färdigt exempel med Spring Boot och Thymeleaf finns i repot under `java-klient/`. Det visar GET, POST och DELETE mot datalaken via ett webbgränssnitt.
+
+### Deploya på KTH Cloud
+
+1. Gå till [app.cloud.cbh.kth.se](https://app.cloud.cbh.kth.se) → **New deployment**
+2. Fyll i:
+   - **Image:** `ghcr.io/wildrelation/ducklake-platform/java-klient:latest`
+   - **Port:** `8082`
+   - **Visibility:** Public
+3. Lägg till miljövariabler:
+   - `DATALAKE_URL` = `https://<datalake-deployment>.app.cloud.cbh.kth.se`
+   - `API_KEY` = ditt lösenord
+
+> **OBS:** Om du inte anger `API_KEY` används standardvärdet `"change-me"`. Då skickas fel lösenord till datalaken och alla POST/DELETE-anrop misslyckas med **401 Unauthorized**. Sätt alltid `API_KEY` som miljövariabel i KTH Cloud — aldrig i koden.
+
+---
+
 ## Källkod och live-exempel
 
-Källkod (datalaken): [github.com/WildRelation/ducklake-platform](https://github.com/WildRelation/ducklake-platform)
+Källkod: [github.com/WildRelation/ducklake-platform](https://github.com/WildRelation/ducklake-platform)
 
 Live datalake API: [misty-abnormally-educated.app.cloud.cbh.kth.se](https://misty-abnormally-educated.app.cloud.cbh.kth.se)
 
